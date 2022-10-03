@@ -16,6 +16,7 @@ import (
 
 //go:embed html/*
 var content embed.FS
+var theReceiver *webrtc.RTPReceiver
 
 func main() {
 	fmt.Println("==> http://localhost:8084/")
@@ -63,21 +64,28 @@ func handleWebrtc(w http.ResponseWriter, r *http.Request) {
 }
 
 func saveToFile(track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
+	theReceiver = receiver
 	file, err := os.Create("output.wav")
 	if err != nil {
 		panic(err)
 	}
+
 	defer file.Close()
 	enc := wav.NewEncoder(file, 8000, 8, 1, 7)
 	defer enc.Close()
 
+	fmt.Println("will save received audio into output.wav...")
 	for {
 		rtpPacket, _, err := track.ReadRTP()
 		if err != nil {
 			log.Printf("failed to read rtp packet from browser, exiting loop. %s\n", err)
 			return
 		}
-
+		if len(rtpPacket.Payload) == 0 {
+			log.Println("stop reveiving RTP since read o bytes")
+			break
+		}
+		fmt.Printf(".")
 		for _, b := range rtpPacket.Payload {
 			enc.WriteFrame(b)
 		}
@@ -116,4 +124,7 @@ func fromFileToBrowser(sess *WebrtcSession) {
 		err = sendRTP()
 	}
 	fmt.Printf("stop sending rtp packet to browser. %v\n", err)
+	if theReceiver != nil {
+		theReceiver.Stop()
+	}
 }

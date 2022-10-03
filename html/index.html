@@ -1,70 +1,78 @@
 <html>
     <body>
         <h1>WebRTC PCMU test</h1>
-        <audio id="audio1" controls autoplay muted></audio>
+        <audio id="audio-speaker" controls autoplay></audio>
+        <audio id="audio-mic" controls autoplay muted></audio>
         <button onclick="makecall()">make call</button>
         <button onclick="endcall()">end call</button>
     </body>
     <script>
         var peerConn;
         function setPrefAudioCodecs() {
-            try {
-                let codecs = RTCRtpReceiver.getCapabilities('audio').codecs;
-                let pcmu_codecs = [];
-                codecs.forEach(codec => {
-                    if (codec.mimeType == "audio/PCMU") {
-                        pcmu_codecs.push(codec)
-                    }
-                })
-                if (pcmu_codecs.length > 0) {
-                   peerConn.getTransceivers().forEach(transceiver => {
-                        transceiver.setCodecPreferences(pcmu_codecs);
-                    })
+            let codecs = RTCRtpReceiver.getCapabilities('audio').codecs;
+            let pcmu_codecs = [];
+            codecs.forEach(codec => {
+                if (codec.mimeType == "audio/PCMU") {
+                    pcmu_codecs.push(codec)
                 }
-            } catch (ex) {
-                this.errorMessage = ex.toString()
+            })
+            if (pcmu_codecs.length > 0) {
+                peerConn.getTransceivers().forEach(transceiver => {
+                    transceiver.setCodecPreferences(pcmu_codecs);
+                })
             }
         }
-        async function createPeerConnection(callback) {
-            peerConn = new RTCPeerConnection(/*{
-                iceServers: [
-                {
-                    urls: 'stun:stun.l.google.com:19302'
-                }
-                ]
-            }*/)
-            try {
-                let stream = await navigator.mediaDevices.getUserMedia({ video: false, audio: true })
-                document.getElementById('audio1').srcObject = stream
-                stream.getTracks().forEach(track => {
-                    console.log("adding track", track)
-                    peerConn.addTrack(track, stream)
-                })
-                setPrefAudioCodecs() 
-                let offer = await this.peerConn.createOffer()
-                console.log("local offer:", offer)
-                peerConn.setLocalDescription(offer)
-                peerConn.oniceconnectionstatechange = e => {
-                    console.log(this.peerConn.iceConnectionState)
-                    if (peerConn.iceConnectionState === "disconnected" && peerConn != null) {
-                        //this.hangup()
+        async function createPeerConnection() {
+            return new Promise(async (resolve, reject) => {
+                peerConn = new RTCPeerConnection(/*{
+                    iceServers: [
+                    {
+                        urls: 'stun:stun.l.google.com:19302'
                     }
+                    ]
+                }*/)
+                try {
+                    // remote audio
+                    peerConn.ontrack = function (event) {
+                        document.getElementById('audio-speaker').srcObject = event.streams[0]
+                    }
+                    peerConn.addTransceiver('audio')
 
-                }
-                this.peerConn.onicecandidate = event => {
-                    console.log("onicecandidate:", event)
-                    if (event.candidate === null) {
-                        callback(peerConn.localDescription)
+                    // mic
+                    let stream = await navigator.mediaDevices.getUserMedia({'video':false,'audio':true});
+                    document.getElementById('audio-mic').srcObject = stream
+
+                    stream.getTracks().forEach(track => {
+                        console.log("adding track", track)
+                        this.peerConn.addTrack(track, stream)
+                    })
+
+                    let offer = await this.peerConn.createOffer()
+                    console.log("local offer:", offer)
+                    peerConn.setLocalDescription(offer)
+                    peerConn.oniceconnectionstatechange = e => {
+                        console.log(this.peerConn.iceConnectionState)
+                        if (peerConn.iceConnectionState === "disconnected" && peerConn != null) {
+                            endcall()
+                        }
+
                     }
+                    this.peerConn.onicecandidate = event => {
+                        console.log("onicecandidate:", event)
+                        if (event.candidate === null) {
+                            resolve(peerConn.localDescription)
+                        }
+                    }
+                } catch (ex) {
+                    reject(ex)
                 }
-            } catch (ex) {
-                alert(ex.toString())
-            }
+
+            })
         }
         function endcall() {
             if (peerConn != null) {
                 try {
-                    let stream = document.getElementById('audio1').srcObject
+                    let stream = document.getElementById('audio-speaker').srcObject
                     let toRemove = []
                     stream.getTracks().forEach(track => {
                         track.stop()
@@ -81,18 +89,17 @@
             }
         }
         async function makecall() {
-            createPeerConnection(async sdp => {
-                const response = await fetch("/webrtc", {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({BrowserSDP:sdp}) 
-                });
-                let resp = await response.json();
-                console.log("server SDP:", resp)
-                this.peerConn.setRemoteDescription(new RTCSessionDescription(resp.ServerSDP))
-            })
+            let sdp = await createPeerConnection()
+            const response = await fetch("/webrtc", {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({BrowserSDP:sdp}) 
+            });
+            let resp = await response.json();
+            console.log("server SDP:", resp)
+            this.peerConn.setRemoteDescription(new RTCSessionDescription(resp.ServerSDP))
         }
     </script>
 </html>
